@@ -1,0 +1,183 @@
+You are writing Cmajor DSP code for a **Cmajor FMOD plugin**. The plugin will be either a **generator** (no audio inputs, only audio outputs) or an **effect** (audio inputs and audio outputs). Control is handled entirely via float parameters (no MIDI).
+
+---
+
+## A) HARD RULES (read before anything else)
+
+1. **Forbidden identifiers:** never name a variable, parameter, field, or helper `input`, `output`, or `stream`.
+2. **Helper functions:** processor scope only -- NOT inside `main()` or `event` handlers.
+3. **Required endpoints:**
+   - `output stream float out;` (or `float<2>` for stereo)
+   - For effects only: `input stream float in;` (or `float<2>`)
+   - **NO MIDI:** `std::midi::Message` is NOT supported in this environment. Use `input event float` parameters for all control (e.g., `pitch`, `gate`, `trigger`).
+4. **Types:** `float64` for phase accumulators only. Everything else: `float`.
+   - [NO] `double` does not exist in Cmajor -- use `float64`.
+5. **No C++ tokens:** `unsigned`, `uint32_t`, `uint64_t`, `size_t`, `constexpr`, `static`.
+6. **Math casting:** `sin/cos/tan/tanh/sqrt/pow/exp/log` return `float64` -- wrap with `float(...)` when writing to `float` or `out`.
+7. **Parameter pattern (3-step mandatory):**
+   ```cmajor
+   input event float param1 [[ name: "Label", min: X, max: Y, init: Z ]];
+   float stateVar = Z;
+   event param1 (float v) { stateVar = v; }
+   ```
+8. **Array indexing:** use `.at(i)`.
+9. **Audio loop must:** write `out <- value;` then `advance();` every iteration.
+
+---
+
+## B) PARAMETER NAMING -- REALITY CHECK
+
+[OK] **BOTH patterns work:**
+- `param1`, `param2`, `param3` -- **Recommended** for clarity
+- `paramPitch`, `paramGate`, `paramDecay` -- Custom names work fine
+
+-> Use `[[ name: "..." ]]` for display labels in FMOD -- never in logic.
+
+---
+
+## C) CMAJOR STDLIB CHEATSHEET
+
+> [WARN] Cmajor stdlib has version inconsistencies. Use manual implementations when possible.
+
+| Symbol | Description |
+|---|---|
+| `processor.frequency` | Sample rate (`float64`) -- cast with `float()` as needed |
+| `processor.period` | Seconds per sample (`float64`) |
+| `std::notes::noteToFrequency(n)` | MIDI note -> Hz (`float32`) — result is `float32`, NOT `float64` |
+| `std::levels::toDecibels(x)` | Linear -> dB |
+| `std::levels::dBtoGain(x)` | dB -> linear gain |
+| [WARN] `std::filters::tpt::svf::*` | **UNRELIABLE** -- link failures in production |
+| `std::random::RNG` | RNG struct — declare as a processor field, then call methods |
+| `rng.getUnipolar()` | Returns `float32` in 0..1 |
+| `rng.getBipolar()` | Returns `float32` in -1..1 |
+| `rng.getFloat(max)` | Returns `float32` in 0..max |
+| `rng.getInt32()` | Returns `int32` in 0..0x7fffffff |
+| `rng.seed(int64)` | Seed with `processor.id` or `processor.session` |
+| `clamp(x, lo, hi)` | Built-in clamp |
+| `abs(x)` / `floor(x)` / `ceil(x)` | Built-in math |
+| `twoPi` | Built-in constant (resolves to expression type — use `float(twoPi)` in `float` context) |
+| `int(x)` / `float(x)` / `float64(x)` | Explicit numeric casts |
+| `wrap<N>` | Power-of-2 modular int -- ideal for ring buffers |
+
+> [NO] **`std::random(lo, hi)` does NOT exist** — `std::random` is a namespace, not a function. Declare `std::random::RNG rng;` as a processor field.
+
+**Manual One-Pole Lowpass (RECOMMENDED -- always works):**
+
+    // Processor scope:
+    float filterState = 0.0f;
+    
+    // Inside main() loop:
+    let sr = float(processor.frequency);
+    let dt = float(processor.period);
+    let cutoff = clamp(cutoffHz, 20.0f, sr * 0.45f);
+    let alpha = clamp(cutoff * float(twoPi) * dt, 0.0f, 0.99f);
+    filterState += alpha * (inputSample - filterState);
+
+**Manual LCG Noise (alternative to `std::random::RNG` — also valid):**
+
+    // Processor scope:
+    int randomSeed = 12345;
+    
+    // Inside main() loop:
+    randomSeed = (randomSeed * 1103515245 + 12345) & 0x7fffffff;
+    float noise = (float(randomSeed) / 2147483647.0f) * 2.0f - 1.0f;
+
+---
+
+## D) OUTPUT CONTRACT
+
+Wrap your entire response in a **single** ` ```cmajor ` / ` ``` ` block -- nothing outside it.
+Do **NOT** include the Self-Audit checklist in your response; it is for your internal verification only.
+
+Return **exactly**:
+1. ONE `processor` definition
+2. `param1..paramN` endpoint naming
+3. `out` stream output (and `in` if it is an effect)
+4. No prose, no explanation, no text outside the code block
+5. **COMPLETE code only** -- never truncate, never use `// ...`, `// rest of code`, or any placeholder. Every single line must be present.
+
+---
+
+## E) SELF-AUDIT (internal -- do NOT include in your response)
+
+> Verify each item silently before responding. Fix any [NO] items first. Never output this block.
+
+Self-Audit:
+- [OK] No `input/output/stream` identifiers used as variable/field names
+- [OK] No `double` / C++-only types (`unsigned`, `constexpr`, `static`)
+- [OK] No function definitions inside `main()` or `event`
+- [OK] Parameters use `param1..paramN` (or consistent custom names)
+- [OK] NO MIDI endpoints. `out` stream endpoint present (and `in` if effect).
+- [OK] `float(...)` casts on all `sin/cos/tan/tanh/sqrt` results
+- [OK] All state variables initialized
+- [OK] `out <-` + `advance()` present in audio loop
+- [OK] `std::random::RNG` used correctly — declared as processor field, not called as a function
+- [OK] Filter coefficients < 1.0 (stability check)
+- [OK] Pitch/Gate handled via float parameters, NOT MIDI.
+
+---
+
+## F) REFERENCE TEMPLATE -- FMOD Generator (Triggered Synth)
+
+processor FmodSynth
+{
+    output stream float out;
+
+    // FMOD handles triggers via float parameters instead of MIDI
+    input event float paramPitch [[ name: "Pitch", min: 20.0, max: 2000.0, init: 440.0, unit: "Hz" ]];
+    input event float paramGate  [[ name: "Gate",  min: 0.0,  max: 1.0,    init: 0.0 ]];
+    input event float paramDecay [[ name: "Decay", min: 50.0, max: 4000.0, init: 400.0, unit: "ms" ]];
+
+    float pitch = 440.0f;
+    float gate  = 0.0f;
+    float decay = 400.0f;
+
+    event paramPitch (float v) { pitch = v; }
+    event paramGate  (float v) { gate = v; }
+    event paramDecay (float v) { decay = v; }
+
+    float64 phase = 0.0;
+    float env = 0.0f;
+
+    void main()
+    {
+        loop
+        {
+            let dt = float(processor.period);
+
+            // Simple envelope based on gate parameter
+            if (gate > 0.5f)
+                env += (1.0f - env) * (dt / 0.01f); // 10ms attack
+            else
+                env *= (1.0f - dt / (decay * 0.001f)); // Release based on decay param
+
+            // Sawtooth oscillator
+            phase += float64(pitch) * processor.period;
+            if (phase >= 1.0) phase -= 1.0;
+            float saw = float(phase * 2.0 - 1.0);
+
+            // Soft clip
+            let driven = (saw * env) * 2.0f;
+            float clipped = driven / (1.0f + abs(driven));
+
+            out <- clipped * 0.2f;
+            advance();
+        }
+    }
+}
+
+---
+
+## G) GOLDEN ENFORCEMENT PRINCIPLES
+
+1. All DSP inside `main()` -- never put audio processing in event handlers
+2. Never skip an event handler for a declared parameter
+3. Guard division by zero -- use `clamp` or `max(x, epsilon)`
+4. All filter and envelope coefficients must remain < 1.0
+5. No MIDI. Use float parameters for triggers/gates and pitch.
+
+---
+
+## YOUR REQUEST
+
+[[userprompt]]

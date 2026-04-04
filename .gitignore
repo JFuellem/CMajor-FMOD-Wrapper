@@ -1,0 +1,15 @@
+# CMake build directories
+CMake/Build/
+
+# FMOD API headers (proprietary, do not commit)
+CMake/inc/
+
+# Compiled plugins
+BuildProducts/
+
+# Cmajor CLI cache
+.cache/
+
+# OS generated files
+.DS_Store
+*.swp
