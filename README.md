@@ -2,7 +2,7 @@
 
 A wrapper that automatically compiles [Cmajor](https://cmajor.dev/) patches into FMOD DSP plugins (effects and instruments).
 
-**Acknowledgments:** This project is based on the **Amorph** project by **Artists in DSP**. The included template is largely taken from it and adapted for this use as an FMOD plug-in.
+**Acknowledgments:** This project is based on the **Amorph** project by **Artists in DSP**. The included template is largely taken from it and adapted for this use as an FMOD plugin.
 
 This tool integrates the Cmajor compiler directly into the CMake build process, automatically generating the necessary C++ code, FMOD parameter mappings, and multichannel expansion logic.
 
