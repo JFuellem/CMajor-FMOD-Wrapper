@@ -26,12 +26,12 @@ extern "C" {
 #endif
 }
 
-FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dspcreate (FMOD_DSP_STATE *dsp_state);
-FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dsprelease (FMOD_DSP_STATE *dsp_state);
-FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dspreset (FMOD_DSP_STATE *dsp_state);
-FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dspprocess (FMOD_DSP_STATE *dsp_state, unsigned int length, const FMOD_DSP_BUFFER_ARRAY *inbufferarray, FMOD_DSP_BUFFER_ARRAY *outbufferarray, FMOD_BOOL inputsidle, FMOD_DSP_PROCESS_OPERATION op);
-FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dspsetparamfloat (FMOD_DSP_STATE *dsp_state, int index, float value);
-FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dspgetparamfloat (FMOD_DSP_STATE *dsp_state, int index, float *value, char *valuestr);
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspcreate (FMOD_DSP_STATE *dsp_state);
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dsprelease (FMOD_DSP_STATE *dsp_state);
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspreset (FMOD_DSP_STATE *dsp_state);
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspprocess (FMOD_DSP_STATE *dsp_state, unsigned int length, const FMOD_DSP_BUFFER_ARRAY *inbufferarray, FMOD_DSP_BUFFER_ARRAY *outbufferarray, FMOD_BOOL inputsidle, FMOD_DSP_PROCESS_OPERATION op);
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspsetparamfloat (FMOD_DSP_STATE *dsp_state, int index, float value);
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspgetparamfloat (FMOD_DSP_STATE *dsp_state, int index, float *value, char *valuestr);
 
 static FMOD_DSP_PARAMETER_DESC FMOD_CMAJOR_@PLUGIN_NAME@_Parameters[MAX_CMAJOR_PARAMETERS];
 FMOD_DSP_PARAMETER_DESC *FMOD_CMAJOR_@PLUGIN_NAME@_DSPParam[MAX_CMAJOR_PARAMETERS] = {};
@@ -82,9 +82,9 @@ extern "C" {
     {
         const auto& param = tempWrapper.parameters[i];
         FMOD_CMAJOR_@PLUGIN_NAME@_DSPParam[finalParameters] = &FMOD_CMAJOR_@PLUGIN_NAME@_Parameters[finalParameters];
-        
-        FMOD_DSP_INIT_PARAMDESC_FLOAT(FMOD_CMAJOR_@PLUGIN_NAME@_Parameters[finalParameters], 
-                                      param.name.c_str(), param.unit.c_str(), "Cmajor param", 
+
+        FMOD_DSP_INIT_PARAMDESC_FLOAT(FMOD_CMAJOR_@PLUGIN_NAME@_Parameters[finalParameters],
+                                      param.name.c_str(), param.unit.c_str(), "Cmajor param",
                                       param.min, param.max, param.init);
         FMOD_CMAJOR_@PLUGIN_NAME@_Parameters[finalParameters].floatdesc.mapping.type = FMOD_DSP_PARAMETER_FLOAT_MAPPING_TYPE_LINEAR;
         finalParameters++;
@@ -102,23 +102,25 @@ extern "C" {
 }
 }
 
-FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dspcreate(FMOD_DSP_STATE *dsp_state)
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspcreate(FMOD_DSP_STATE *dsp_state)
 {
     dsp_state->plugindata = (WrapperType *)FMOD_DSP_ALLOC(dsp_state, sizeof(WrapperType));
     if (!dsp_state->plugindata)
         return FMOD_ERR_MEMORY;
     
     WrapperType *state = new (dsp_state->plugindata) WrapperType();
-    
+
     int sampleRate = 44100;
+    unsigned int blockSize = 512;
     FMOD_DSP_GETSAMPLERATE(dsp_state, &sampleRate);
-    
-    state->Init(sampleRate);
-    
+    FMOD_DSP_GETBLOCKSIZE(dsp_state, &blockSize);
+
+    state->InitWithHost(static_cast<double>(sampleRate), static_cast<int>(blockSize));
+
     return FMOD_OK;
 }
 
-FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dsprelease(FMOD_DSP_STATE *dsp_state)
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dsprelease(FMOD_DSP_STATE *dsp_state)
 {
     WrapperType *state = (WrapperType *)dsp_state->plugindata;
     
@@ -130,7 +132,7 @@ FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dsprelease(FMOD_DSP_STATE *dsp_
     return FMOD_OK;
 }
 
-FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dspprocess(FMOD_DSP_STATE *dsp_state, unsigned int length, const FMOD_DSP_BUFFER_ARRAY *inbufferarray, FMOD_DSP_BUFFER_ARRAY *outbufferarray, FMOD_BOOL inputsidle, FMOD_DSP_PROCESS_OPERATION op)
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspprocess(FMOD_DSP_STATE *dsp_state, unsigned int length, const FMOD_DSP_BUFFER_ARRAY *inbufferarray, FMOD_DSP_BUFFER_ARRAY *outbufferarray, FMOD_BOOL inputsidle, FMOD_DSP_PROCESS_OPERATION op)
 {
     WrapperType *state = (WrapperType *)dsp_state->plugindata;
     
@@ -138,10 +140,12 @@ FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dspprocess(FMOD_DSP_STATE *dsp_
     {
         if (!outbufferarray)
             return FMOD_ERR_DSP_DONTPROCESS;
-        
+
+        state->SyncFromFmod(dsp_state);
+
         if (state->multiChannelExpandable && inbufferarray && inbufferarray->numbuffers > 0)
         {
-            auto chans = inbufferarray->buffernumchannels[0];
+            int chans = inbufferarray->buffernumchannels[0];
             outbufferarray->buffernumchannels[0] = chans;
             
             switch(chans)
@@ -180,6 +184,16 @@ FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dspprocess(FMOD_DSP_STATE *dsp_
         return FMOD_OK;
     }
 
+    state->SyncFromFmod(dsp_state);
+
+    if (length > (unsigned int) CMAJOR_CODEGEN_MAX_FRAMES_PER_BLOCK)
+    {
+        FMOD_DSP_LOG(dsp_state, FMOD_DEBUG_LEVEL_ERROR, "Cmajor",
+                     "DSP callback length %u exceeds cmaj codegen max %d (reconfigure CMake CMAJOR_MAX_FRAMES_PER_BLOCK and rebuild)",
+                     length, (int) CMAJOR_CODEGEN_MAX_FRAMES_PER_BLOCK);
+        return FMOD_ERR_DSP_FORMAT;
+    }
+
     const float* inBuffer = nullptr;
     int inChannels = 0;
     if (inbufferarray && inbufferarray->numbuffers > 0) {
@@ -199,32 +213,39 @@ FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dspprocess(FMOD_DSP_STATE *dsp_
     return FMOD_OK;
 }
 
-FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dspreset(FMOD_DSP_STATE *dsp_state)
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspreset(FMOD_DSP_STATE *dsp_state)
 {
     WrapperType *state = (WrapperType *)dsp_state->plugindata;
     if (state)
+    {
+        state->SyncFromFmod(dsp_state);
         state->Reset();
+    }
     return FMOD_OK;
 }
 
-FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dspsetparamfloat(FMOD_DSP_STATE *dsp_state, int index, float value)
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspsetparamfloat(FMOD_DSP_STATE *dsp_state, int index, float value)
 {
     WrapperType *state = (WrapperType *)dsp_state->plugindata;
-    if (state) {
-        state->SetParameterValue(index, value);
-        return FMOD_OK;
-    }
-    return FMOD_ERR_INVALID_PARAM;
+    if (!state)
+        return FMOD_ERR_INVALID_PARAM;
+    if (!state->SetParameterValue(index, value))
+        return FMOD_ERR_INVALID_PARAM;
+    return FMOD_OK;
 }
 
-FMOD_RESULT F_CALLBACK FMOD_CMAJOR_@PLUGIN_NAME@_dspgetparamfloat(FMOD_DSP_STATE *dsp_state, int index, float *value, char *valuestr)
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspgetparamfloat(FMOD_DSP_STATE *dsp_state, int index, float *value, char *valuestr)
 {
     WrapperType *state = (WrapperType *)dsp_state->plugindata;
-    if (state) {
-        *value = state->GetParameterValue(index);
-        if (valuestr)
-            snprintf(valuestr, FMOD_DSP_GETPARAM_VALUESTR_LENGTH, "%.2f", *value);
-        return FMOD_OK;
-    }
-    return FMOD_ERR_INVALID_PARAM;
+    if (!state || !value)
+        return FMOD_ERR_INVALID_PARAM;
+
+    float v = 0.0f;
+    if (!state->TryGetParameterFloat(index, &v))
+        return FMOD_ERR_INVALID_PARAM;
+
+    *value = v;
+    if (valuestr)
+        snprintf(valuestr, FMOD_DSP_GETPARAM_VALUESTR_LENGTH, "%.2f", v);
+    return FMOD_OK;
 }

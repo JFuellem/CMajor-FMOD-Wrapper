@@ -8,6 +8,10 @@
 #include <memory>
 #include <map>
 
+#ifndef CMAJOR_CODEGEN_MAX_FRAMES_PER_BLOCK
+#define CMAJOR_CODEGEN_MAX_FRAMES_PER_BLOCK 8192
+#endif
+
 using json = nlohmann::json;
 
 template <typename Processor>
@@ -24,13 +28,17 @@ public:
         if (interleaveBuffer) delete[] interleaveBuffer;
     }
 
-    void Init(double sampleRate)
+    // Metadata-only (GetDSPDescription): no FMOD_DSP_STATE; rate/block are placeholders.
+    void Init(double sampleRate) { InitWithHost(sampleRate, 512); }
+
+    void InitWithHost(double sampleRate, int hostBlockFrames)
     {
         this->sampleRate = sampleRate;
+        lastHostBlockFrames = hostBlockFrames;
         
         // Parse JSON for parameter info from a temporary processor
         Processor tempProcessor;
-        auto j = json::parse(Processor::programDetailsJSON);
+        const json j = json::parse(Processor::programDetailsJSON);
         
         if (j.contains("inputs")) {
             for (const auto& input : j["inputs"]) {
@@ -101,12 +109,35 @@ public:
 
         multiChannelExpandable = (numInputChannels == 1 && numOutputChannels == 1);
 
-        size_t c = 0;
+        int32_t c = 0;
         do {
             processors.push_back(std::make_unique<Processor>());
             processors.back()->initialise(c, sampleRate);
-            c++;
+            ++c;
         } while (multiChannelExpandable && c < 32);
+    }
+
+    // Re-read host sample rate / nominal block from FMOD; re-initialise processors if the rate changed.
+    void SyncFromFmod(FMOD_DSP_STATE* dsp_state)
+    {
+        if (!dsp_state || processors.empty())
+            return;
+
+        int rate = 44100;
+        unsigned int block = 512;
+        FMOD_DSP_GETSAMPLERATE(dsp_state, &rate);
+        FMOD_DSP_GETBLOCKSIZE(dsp_state, &block);
+
+        if (block != lastHostBlockFrames)
+            lastHostBlockFrames = block;
+
+        const double newRate = static_cast<double>(rate);
+        if (newRate != sampleRate)
+        {
+            sampleRate = newRate;
+            for (size_t i = 0; i < processors.size(); ++i)
+                processors[i]->initialise(static_cast<int32_t>(i), sampleRate);
+        }
     }
 
     void Reset()
@@ -186,23 +217,25 @@ public:
         }
     }
 
-    void SetParameterValue(int index, float value)
+    bool SetParameterValue(int index, float value)
     {
-        if (index >= 0 && index < parameters.size()) {
-            auto& param = parameters[index];
-            param.currentValue = value;
-            for (auto& proc : processors) {
-                proc->addEvent(param.handle, 0, reinterpret_cast<const unsigned char*>(&value));
-            }
+        if (index < 0 || index >= static_cast<int>(parameters.size()))
+            return false;
+        auto& param = parameters[static_cast<size_t>(index)];
+        param.currentValue = value;
+        for (auto& proc : processors) {
+            proc->addEvent(param.handle, 0, reinterpret_cast<const unsigned char*>(&value));
         }
+        return true;
     }
 
-    float GetParameterValue(int index)
+    // Last value set via dspsetparamfloat / automation (Cmajor is updated via addEvent; there is no generic readback from the processor).
+    bool TryGetParameterFloat(int index, float* outValue) const
     {
-        if (index >= 0 && index < parameters.size()) {
-            return parameters[index].currentValue;
-        }
-        return 0.0f;
+        if (!outValue || index < 0 || index >= static_cast<int>(parameters.size()))
+            return false;
+        *outValue = parameters[static_cast<size_t>(index)].currentValue;
+        return true;
     }
 
     struct ParamInfo {
@@ -229,4 +262,6 @@ public:
     float* interleaveBuffer = nullptr;
     size_t lastChannelCount = 0;
     size_t lastLength = 0;
+
+    unsigned int lastHostBlockFrames = 0;
 };
