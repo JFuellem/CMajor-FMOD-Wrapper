@@ -68,6 +68,7 @@ public:
                         }
                     }
                     
+                    info.currentValue = info.init;
                     parameters.push_back(info);
                 }
             }
@@ -115,6 +116,8 @@ public:
             processors.back()->initialise(c, sampleRate);
             ++c;
         } while (multiChannelExpandable && c < 32);
+
+        ApplyCurrentParametersToProcessors();
     }
 
     // Re-read host sample rate / nominal block from FMOD; re-initialise processors if the rate changed.
@@ -137,6 +140,7 @@ public:
             sampleRate = newRate;
             for (size_t i = 0; i < processors.size(); ++i)
                 processors[i]->initialise(static_cast<int32_t>(i), sampleRate);
+            ApplyCurrentParametersToProcessors();
         }
     }
 
@@ -145,6 +149,7 @@ public:
         for (auto& proc : processors) {
             proc->reset();
         }
+        ApplyCurrentParametersToProcessors();
     }
 
     void Process(const float* inBuffer, float* outBuffer, unsigned int length, int inChannels, int outChannels)
@@ -236,6 +241,15 @@ public:
             return false;
         *outValue = parameters[static_cast<size_t>(index)].currentValue;
         return true;
+    }
+
+    void ApplyCurrentParametersToProcessors()
+    {
+        for (const auto& param : parameters) {
+            for (auto& proc : processors) {
+                proc->addEvent(param.handle, 0, reinterpret_cast<const unsigned char*>(&param.currentValue));
+            }
+        }
     }
 
     struct ParamInfo {

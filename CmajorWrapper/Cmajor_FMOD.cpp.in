@@ -49,7 +49,7 @@ FMOD_DSP_DESCRIPTION FMOD_CMAJOR_@PLUGIN_NAME@_Desc =
     0,
     FMOD_CMAJOR_@PLUGIN_NAME@_dspprocess,
     0,
-    MAX_CMAJOR_PARAMETERS,
+    0,
     FMOD_CMAJOR_@PLUGIN_NAME@_DSPParam,
     FMOD_CMAJOR_@PLUGIN_NAME@_dspsetparamfloat, //setfloat
     0, //setint
