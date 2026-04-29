@@ -28,16 +28,35 @@ public:
         if (interleaveBuffer) delete[] interleaveBuffer;
     }
 
-    // Metadata-only (GetDSPDescription): no FMOD_DSP_STATE; rate/block are placeholders.
-    void Init(double sampleRate) { InitWithHost(sampleRate, 512); }
+    // Metadata-only (GetDSPDescription)
+    void Init(double sampleRate)
+    {
+        this->sampleRate = sampleRate;
+        InitMetadata();
+    }
 
     void InitWithHost(double sampleRate, int hostBlockFrames)
     {
         this->sampleRate = sampleRate;
         lastHostBlockFrames = hostBlockFrames;
-        
-        // Parse JSON for parameter info from a temporary processor
-        Processor tempProcessor;
+
+        InitMetadata();
+
+        int32_t c = 0;
+        do {
+            processors.push_back(std::make_unique<Processor>());
+            processors.back()->initialise(c, sampleRate);
+            ++c;
+        } while (multiChannelExpandable && c < 32);
+
+        ApplyCurrentParametersToProcessors();
+    }
+
+    void InitMetadata()
+    {
+        parameters.clear();
+
+        // Parse JSON for parameter and bus info without instantiating the generated processor.
         const json j = json::parse(Processor::programDetailsJSON);
         
         if (j.contains("inputs")) {
@@ -109,15 +128,6 @@ public:
         }
 
         multiChannelExpandable = (numInputChannels == 1 && numOutputChannels == 1);
-
-        int32_t c = 0;
-        do {
-            processors.push_back(std::make_unique<Processor>());
-            processors.back()->initialise(c, sampleRate);
-            ++c;
-        } while (multiChannelExpandable && c < 32);
-
-        ApplyCurrentParametersToProcessors();
     }
 
     // Re-read host sample rate / nominal block from FMOD; re-initialise processors if the rate changed.
