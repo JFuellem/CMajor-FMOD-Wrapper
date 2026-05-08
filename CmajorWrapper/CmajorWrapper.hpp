@@ -3,6 +3,15 @@
 #include "fmod.h"
 #include "fmod_dsp.h"
 #include "json.hpp"
+#include "dr_wav.h"
+#include "dr_mp3.h"
+#include <algorithm>
+#include <cctype>
+#include <cstring>
+#include <limits>
+#include <mutex>
+#include <optional>
+#include <utility>
 #include <vector>
 #include <string>
 #include <memory>
@@ -18,6 +27,19 @@ template <typename Processor>
 class CmajorWrapper
 {
 public:
+    enum class BufferLoadResult {
+        Queued,
+        NotDataParameter,
+        DecodeFailed,
+        UnsupportedEndpointType
+    };
+
+    struct BufferEndpointInfo {
+        std::string id;
+        std::string name;
+        uint32_t handle = 0;
+    };
+
     CmajorWrapper()
     {
     }
@@ -55,13 +77,19 @@ public:
     void InitMetadata()
     {
         parameters.clear();
+        hasSampleBufferEndpoint = false;
+        sampleBufferEndpoint = {};
+        pendingSampleBuffer.reset();
+        activeSampleBuffer.reset();
 
         // Parse JSON for parameter and bus info without instantiating the generated processor.
         const json j = json::parse(Processor::programDetailsJSON);
         
         if (j.contains("inputs")) {
             for (const auto& input : j["inputs"]) {
-                if (input["endpointType"] == "event" && input["dataType"]["type"] == "float32") {
+                const bool isBufferEndpoint = IsBufferLoadableInputEndpoint(input);
+
+                if (!isBufferEndpoint && input["endpointType"] == "event" && input["dataType"]["type"] == "float32") {
                     ParamInfo info;
                     info.id = input["endpointID"].template get<std::string>();
                     info.name = info.id;
@@ -89,6 +117,33 @@ public:
                     
                     info.currentValue = info.init;
                     parameters.push_back(info);
+                }
+
+                if (isBufferEndpoint && !hasSampleBufferEndpoint) {
+                    BufferEndpointInfo info;
+                    info.id = input["endpointID"].template get<std::string>();
+                    info.name = info.id;
+
+                    if (input.contains("annotation")) {
+                        const auto& ann = input["annotation"];
+                        if (ann.contains("name")) {
+                            info.name = ann["name"].template get<std::string>();
+                        }
+                    }
+
+                    bool foundHandle = false;
+                    for (const auto& ep : Processor::inputEndpoints) {
+                        if (std::string(ep.name) == info.id) {
+                            info.handle = ep.handle;
+                            foundHandle = true;
+                            break;
+                        }
+                    }
+
+                    if (foundHandle) {
+                        hasSampleBufferEndpoint = true;
+                        sampleBufferEndpoint = std::move(info);
+                    }
                 }
             }
         }
@@ -159,11 +214,20 @@ public:
         for (auto& proc : processors) {
             proc->reset();
         }
+
+        {
+            std::lock_guard<std::mutex> lock(bufferMutex);
+            pendingSampleBuffer.reset();
+            activeSampleBuffer.reset();
+        }
+
         ApplyCurrentParametersToProcessors();
     }
 
     void Process(const float* inBuffer, float* outBuffer, unsigned int length, int inChannels, int outChannels)
     {
+        ApplyPendingSampleBuffer();
+
         if (multiChannelExpandable && inChannels > 1)
         {
             size_t processChans = std::min((size_t)inChannels, processors.size());
@@ -244,6 +308,76 @@ public:
         return true;
     }
 
+    int GetFloatParameterCount() const
+    {
+        return static_cast<int>(parameters.size());
+    }
+
+    size_t GetBufferEndpointCount() const
+    {
+        return hasSampleBufferEndpoint ? 1u : 0u;
+    }
+
+    bool IsBufferDataParameterIndex(int index) const
+    {
+        const int firstDataIndex = GetFloatParameterCount();
+        const int lastDataIndexExclusive = firstDataIndex + (hasSampleBufferEndpoint ? 1 : 0);
+        return index >= firstDataIndex && index < lastDataIndexExclusive;
+    }
+
+    const BufferEndpointInfo* TryGetBufferEndpointForDataParameter(int index) const
+    {
+        if (!IsBufferDataParameterIndex(index))
+            return nullptr;
+
+        return hasSampleBufferEndpoint ? &sampleBufferEndpoint : nullptr;
+    }
+
+    BufferLoadResult SetDataParameterBuffer(int index, const void* data, size_t dataLength)
+    {
+        if (!IsBufferDataParameterIndex(index))
+            return BufferLoadResult::NotDataParameter;
+
+        if (!ProcessorSupportsExternalBufferDelivery())
+            return BufferLoadResult::UnsupportedEndpointType;
+
+        std::vector<float> decodedSamples;
+        unsigned int channels = 0;
+        unsigned int sampleRate = 0;
+        if (!DecodeAudio(data, dataLength, decodedSamples, channels, sampleRate))
+            return BufferLoadResult::DecodeFailed;
+
+        if (channels == 0 || decodedSamples.empty())
+            return BufferLoadResult::DecodeFailed;
+
+        std::vector<float> monoSamples;
+        if (channels == 1) {
+            monoSamples = std::move(decodedSamples);
+        } else {
+            const size_t frameCount = decodedSamples.size() / channels;
+            monoSamples.resize(frameCount);
+            for (size_t frame = 0; frame < frameCount; ++frame) {
+                float sum = 0.0f;
+                for (unsigned int ch = 0; ch < channels; ++ch) {
+                    sum += decodedSamples[(frame * channels) + ch];
+                }
+                monoSamples[frame] = sum / static_cast<float>(channels);
+            }
+        }
+
+        auto bufferData = std::make_shared<ExternalBufferData>();
+        {
+            std::lock_guard<std::mutex> lock(bufferMutex);
+            bufferData->samples = std::move(monoSamples);
+            bufferData->channels = 1;
+            bufferData->sampleRate = sampleRate;
+            bufferData->frameCount = bufferData->samples.size();
+            pendingSampleBuffer = std::move(bufferData);
+        }
+
+        return BufferLoadResult::Queued;
+    }
+
     // Last value set via dspsetparamfloat / automation (Cmajor is updated via addEvent; there is no generic readback from the processor).
     bool TryGetParameterFloat(int index, float* outValue) const
     {
@@ -273,9 +407,122 @@ public:
         float currentValue = 0.0f;
     };
 
+    struct ExternalBufferData {
+        std::vector<float> samples;
+        unsigned int channels = 0;
+        unsigned int sampleRate = 0;
+        size_t frameCount = 0;
+    };
+
+    static bool IsBufferLoadableInputEndpoint(const json& input)
+    {
+        if (!input.contains("endpointType") || input["endpointType"] != "event")
+            return false;
+
+        if (!input.contains("annotation"))
+            return false;
+
+        const auto& ann = input["annotation"];
+        const bool flagged = JsonAnnotationTrue(ann, "fmodBuffer");
+        const bool isSampleBufferID = input.contains("endpointID")
+                                   && input["endpointID"].template get<std::string>() == "sampleBuffer";
+        return flagged && isSampleBufferID;
+    }
+
+    static bool JsonAnnotationTrue(const json& ann, const char* key)
+    {
+        if (!ann.contains(key))
+            return false;
+
+        const auto& value = ann[key];
+        if (value.is_boolean())
+            return value.template get<bool>();
+        if (value.is_number_integer())
+            return value.template get<int>() != 0;
+        if (value.is_string()) {
+            auto text = value.template get<std::string>();
+            std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return text == "true" || text == "1" || text == "yes";
+        }
+        return false;
+    }
+
+    bool DecodeAudio(const void* data, size_t dataLength, std::vector<float>& decoded, unsigned int& channels, unsigned int& sampleRate)
+    {
+        drwav wav;
+        if (drwav_init_memory(&wav, data, dataLength, nullptr)) {
+            channels = wav.channels;
+            sampleRate = wav.sampleRate;
+            const drwav_uint64 frameCount = wav.totalPCMFrameCount;
+            const drwav_uint64 totalSampleCount = frameCount * channels;
+            decoded.resize(static_cast<size_t>(totalSampleCount));
+            drwav_read_pcm_frames_f32(&wav, frameCount, decoded.data());
+            drwav_uninit(&wav);
+            return true;
+        }
+
+        drmp3 mp3;
+        if (drmp3_init_memory(&mp3, data, dataLength, nullptr)) {
+            channels = mp3.channels;
+            sampleRate = mp3.sampleRate;
+            const drmp3_uint64 frameCount = drmp3_get_pcm_frame_count(&mp3);
+            const drmp3_uint64 totalSampleCount = frameCount * channels;
+            decoded.resize(static_cast<size_t>(totalSampleCount));
+            drmp3_read_pcm_frames_f32(&mp3, frameCount, decoded.data());
+            drmp3_uninit(&mp3);
+            return true;
+        }
+        return false;
+    }
+
+    template <typename Proc>
+    static constexpr bool SupportsMonoSampleBufferEventFor()
+    {
+        return requires(Proc& proc, const typename Proc::std_audio_data_Mono& event) {
+            proc.addEvent_sampleBuffer(event);
+        };
+    }
+
+    static constexpr bool ProcessorSupportsExternalBufferDelivery()
+    {
+        return SupportsMonoSampleBufferEventFor<Processor>();
+    }
+
+    template <typename Proc>
+    static void DeliverSampleBufferToProcessor(Proc& proc, const ExternalBufferData& buffer)
+    {
+        typename Proc::std_audio_data_Mono eventData {};
+        eventData.frames = { const_cast<float*>(buffer.samples.data()), static_cast<typename Proc::SizeType>(buffer.samples.size()) };
+        eventData.sampleRate = static_cast<double>(buffer.sampleRate);
+        proc.addEvent_sampleBuffer(eventData);
+    }
+
+    void ApplyPendingSampleBuffer()
+    {
+        std::shared_ptr<ExternalBufferData> update;
+        {
+            std::lock_guard<std::mutex> lock(bufferMutex);
+            update = pendingSampleBuffer;
+            pendingSampleBuffer.reset();
+        }
+
+        if (update) {
+            if constexpr (ProcessorSupportsExternalBufferDelivery()) {
+                for (auto& proc : processors) {
+                    DeliverSampleBufferToProcessor(*proc, *update);
+                }
+
+                std::lock_guard<std::mutex> lock(bufferMutex);
+                activeSampleBuffer = std::move(update);
+            }
+        }
+    }
+
     std::vector<std::unique_ptr<Processor>> processors;
     double sampleRate = 44100.0;
     std::vector<ParamInfo> parameters;
+    bool hasSampleBufferEndpoint = false;
+    BufferEndpointInfo sampleBufferEndpoint;
     int numInputChannels = 0;
     int numOutputChannels = 0;
     uint32_t audioInputHandle = 0;
@@ -288,4 +535,7 @@ public:
     size_t lastLength = 0;
 
     unsigned int lastHostBlockFrames = 0;
+    std::shared_ptr<ExternalBufferData> pendingSampleBuffer;
+    std::shared_ptr<ExternalBufferData> activeSampleBuffer;
+    std::mutex bufferMutex;
 };

@@ -94,12 +94,12 @@ string(TOLOWER "${PROCESSOR_NAME}" PROCESSOR_LOWER)
 
 set(PATCH_JSON "{
     \"CmajorVersion\": 1,
-    \"ID\": \"com.amorph.${PROCESSOR_LOWER}\",
+    \"ID\": \"com.jrfinteractive.${PROCESSOR_LOWER}\",
     \"version\": \"1.0.0\",
     \"name\": \"${PROCESSOR_NAME}\",
     \"description\": \"Auto-generated patch for ${PROCESSOR_NAME}\",
     \"category\": \"${CATEGORY}\",
-    \"manufacturer\": \"Amorph\",
+    \"manufacturer\": \"JRF Interactive\",
     \"isInstrument\": ${IS_INSTRUMENT},
     \"source\": \"${CMAJOR_FILENAME}\"
 }")
@@ -184,6 +184,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         ./inc
         ${CMAJOR_EXPORT_DIR}
         ../CmajorWrapper
+        ../decoder
     )
 
     add_library(${PROJECT_NAME} STATIC $<TARGET_OBJECTS:oLib>)
@@ -212,6 +213,7 @@ target_include_directories(oLib PRIVATE
     ./inc
     ${CMAJOR_EXPORT_DIR}
     ../CmajorWrapper
+    ../decoder
     ${CMAKE_BINARY_DIR}/CmajorWrapper/generated
 )
 

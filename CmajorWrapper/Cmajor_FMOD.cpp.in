@@ -9,6 +9,9 @@
 #include <emscripten.h>
 #endif
 
+#define DR_WAV_IMPLEMENTATION
+#define DR_MP3_IMPLEMENTATION
+
 #include "CmajorWrapper.hpp"
 #include "cmajor_patch.cpp"
 
@@ -32,6 +35,8 @@ FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspreset (FMOD_DSP_STATE *dsp_state
 FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspprocess (FMOD_DSP_STATE *dsp_state, unsigned int length, const FMOD_DSP_BUFFER_ARRAY *inbufferarray, FMOD_DSP_BUFFER_ARRAY *outbufferarray, FMOD_BOOL inputsidle, FMOD_DSP_PROCESS_OPERATION op);
 FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspsetparamfloat (FMOD_DSP_STATE *dsp_state, int index, float value);
 FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspgetparamfloat (FMOD_DSP_STATE *dsp_state, int index, float *value, char *valuestr);
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspsetparamdata (FMOD_DSP_STATE *dsp_state, int index, void *data, unsigned int length);
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspgetparamdata (FMOD_DSP_STATE *dsp_state, int index, void **value, unsigned int *length, char *valuestr);
 
 static FMOD_DSP_PARAMETER_DESC FMOD_CMAJOR_@PLUGIN_NAME@_Parameters[MAX_CMAJOR_PARAMETERS];
 FMOD_DSP_PARAMETER_DESC *FMOD_CMAJOR_@PLUGIN_NAME@_DSPParam[MAX_CMAJOR_PARAMETERS] = {};
@@ -54,11 +59,11 @@ FMOD_DSP_DESCRIPTION FMOD_CMAJOR_@PLUGIN_NAME@_Desc =
     FMOD_CMAJOR_@PLUGIN_NAME@_dspsetparamfloat, //setfloat
     0, //setint
     0, //setbool
-    0, //setdata
+    FMOD_CMAJOR_@PLUGIN_NAME@_dspsetparamdata, //setdata
     FMOD_CMAJOR_@PLUGIN_NAME@_dspgetparamfloat, //getfloat
     0, //getint
     0, //getbool
-    0, //getdata
+    FMOD_CMAJOR_@PLUGIN_NAME@_dspgetparamdata, //getdata
     0,
     0, //userdata
     0, //sys_register
@@ -87,6 +92,16 @@ extern "C" {
                                       param.name.c_str(), param.unit.c_str(), "Cmajor param",
                                       param.min, param.max, param.init);
         FMOD_CMAJOR_@PLUGIN_NAME@_Parameters[finalParameters].floatdesc.mapping.type = FMOD_DSP_PARAMETER_FLOAT_MAPPING_TYPE_LINEAR;
+        finalParameters++;
+    }
+
+    if (tempWrapper.hasSampleBufferEndpoint)
+    {
+        const auto& endpoint = tempWrapper.sampleBufferEndpoint;
+        FMOD_CMAJOR_@PLUGIN_NAME@_DSPParam[finalParameters] = &FMOD_CMAJOR_@PLUGIN_NAME@_Parameters[finalParameters];
+        FMOD_DSP_INIT_PARAMDESC_DATA(FMOD_CMAJOR_@PLUGIN_NAME@_Parameters[finalParameters],
+                                     endpoint.name.c_str(), "", "Cmajor external buffer",
+                                     FMOD_DSP_PARAMETER_DATA_TYPE_USER);
         finalParameters++;
     }
     
@@ -248,4 +263,29 @@ FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspgetparamfloat(FMOD_DSP_STATE *ds
     if (valuestr)
         snprintf(valuestr, FMOD_DSP_GETPARAM_VALUESTR_LENGTH, "%.2f", v);
     return FMOD_OK;
+}
+
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspsetparamdata(FMOD_DSP_STATE *dsp_state, int index, void *data, unsigned int length)
+{
+    WrapperType *state = (WrapperType *)dsp_state->plugindata;
+    if (!state || !data || length == 0)
+        return FMOD_ERR_INVALID_PARAM;
+
+    switch (state->SetDataParameterBuffer(index, data, length))
+    {
+        case WrapperType::BufferLoadResult::Queued:
+            return FMOD_OK;
+        case WrapperType::BufferLoadResult::NotDataParameter:
+            return FMOD_ERR_INVALID_PARAM;
+        case WrapperType::BufferLoadResult::UnsupportedEndpointType:
+            return FMOD_ERR_UNSUPPORTED;
+        case WrapperType::BufferLoadResult::DecodeFailed:
+        default:
+            return FMOD_ERR_FORMAT;
+    }
+}
+
+FMOD_RESULT F_CALL FMOD_CMAJOR_@PLUGIN_NAME@_dspgetparamdata(FMOD_DSP_STATE * /*dsp_state*/, int /*index*/, void ** /*value*/, unsigned int * /*length*/, char * /*valuestr*/)
+{
+    return FMOD_ERR_INVALID_PARAM;
 }

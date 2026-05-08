@@ -22,6 +22,15 @@ You are writing Cmajor DSP code for a **Cmajor FMOD plugin**. The plugin will be
    ```
 8. **Array indexing:** use `.at(i)`.
 9. **Audio loop must:** write `out <- value;` then `advance();` every iteration.
+10. **Buffer/sample loading intent:** if the user asks for sample loading, sample playback from files, or buffer/buffers, you MUST add this exact mono buffer endpoint:
+   ```cmajor
+   input event std::audio_data::Mono sampleBuffer [[ name: "Sample Buffer", fmodBuffer: true ]];
+   event sampleBuffer (std::audio_data::Mono content) { currentSample = content; }
+   ```
+   - Endpoint ID must be exactly `sampleBuffer` (do not rename). The wrapper binds to this identifier.
+   - You MAY customize only the label text in `name` (e.g. `"Grain Source"`, `"Sample Input"`).
+   - Declare processor state `std::audio_data::Mono currentSample;`, store incoming content there, and read from `currentSample.frames` in `main()`.
+   - Do not decode file bytes in Cmajor code; wrapper delivers decoded mono PCM.
 
 ---
 
@@ -114,6 +123,7 @@ Self-Audit:
 - [OK] `std::random::RNG` used correctly — declared as processor field, not called as a function
 - [OK] Filter coefficients < 1.0 (stability check)
 - [OK] Pitch/Gate handled via float parameters, NOT MIDI.
+- [OK] If user requested sample/buffer loading: includes exact `input event std::audio_data::Mono sampleBuffer [[ name: "...", fmodBuffer: true ]];`
 
 ---
 
