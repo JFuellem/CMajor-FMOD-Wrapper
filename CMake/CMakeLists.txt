@@ -154,7 +154,7 @@ endif()
 configure_file(../CmajorWrapper/Cmajor_FMOD.cpp.in ${CMAKE_BINARY_DIR}/CmajorWrapper/generated/Cmajor_FMOD.cpp)
 file(GLOB GENERATED_FILES "${CMAKE_BINARY_DIR}/CmajorWrapper/generated/*")
 
-file(GLOB WRAPPER_HPP_FILES "../CmajorWrapper/CmajorWrapper.hpp")
+file(GLOB WRAPPER_HPP_FILES "../CmajorWrapper/CmajorWrapper.hpp" "../CmajorWrapper/CmajorWrapper.inl")
 
 add_library(oLib OBJECT
     ${CMAJOR_CPP_FILE}
