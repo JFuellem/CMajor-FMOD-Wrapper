@@ -95,12 +95,16 @@ extern "C" {
         finalParameters++;
     }
 
-    if (tempWrapper.hasSampleBufferEndpoint)
+    for (size_t i = 0; i < tempWrapper.GetBufferEndpointCount(); ++i)
     {
-        const auto& endpoint = tempWrapper.sampleBufferEndpoint;
+        const int dataParamIndex = tempWrapper.GetFloatParameterCount() + static_cast<int>(i);
+        const auto* endpoint = tempWrapper.TryGetBufferEndpointForDataParameter(dataParamIndex);
+        if (!endpoint)
+            continue;
+
         FMOD_CMAJOR_@PLUGIN_NAME@_DSPParam[finalParameters] = &FMOD_CMAJOR_@PLUGIN_NAME@_Parameters[finalParameters];
         FMOD_DSP_INIT_PARAMDESC_DATA(FMOD_CMAJOR_@PLUGIN_NAME@_Parameters[finalParameters],
-                                     endpoint.name.c_str(), "", "Cmajor external buffer",
+                                     endpoint->name.c_str(), "", "Cmajor external buffer",
                                      FMOD_DSP_PARAMETER_DATA_TYPE_USER);
         finalParameters++;
     }
